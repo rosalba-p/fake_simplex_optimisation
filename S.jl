@@ -15,7 +15,7 @@ function energy(p::Vector, hL_size, trainset, trainlabels)
     fakep = reshape(p, (Int(length(p)/hL_size), hL_size))
     errors = 0
     for i in 1:length(trainlabels)
-        out = sign(sum([sum(trainset[i].*fakep[j]) for j in 1:hL_size]))  
+        out = sign(sum([sum(trainset[:,i].*fakep[:,j]) for j in 1:hL_size]))  
         if out != trainlabels[i]
             errors += 1
         end
@@ -133,9 +133,9 @@ function replace_point!(
     old_p = ps[:,i_worst]
 
     ## try to go to the opposite direction than the previous point
-    if x ⋅ (old_p - c) > 0
-        x = -x
-    end
+    #if x ⋅ (old_p - c) > 0
+    #    x = -x
+    #end
 
     ## rescale x so that its length corresponds
     ## to the height of a regular simplex with
