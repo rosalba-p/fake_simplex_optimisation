@@ -133,9 +133,9 @@ function replace_point!(
     old_p = ps[:,i_worst]
 
     ## try to go to the opposite direction than the previous point
-    #if x ⋅ (old_p - c) > 0
-    #    x = -x
-    #end
+    if x ⋅ (old_p - c) > 0
+        x = -x
+    end
 
     ## rescale x so that its length corresponds
     ## to the height of a regular simplex with
@@ -159,6 +159,8 @@ end
 
 function simplex_opt(n::Int, p::Int, y::Int, d::Float64, seed::Int = -1, hL_size::Int = 3) ## TODO: add arguments etc.
 
+
+    filename = string("run_n_", n, "_p_", p, "_d_", d, "_y_", y, ".txt")
     trainset, trainlabels = dataset(n,p)
     #n here is the input size, for a tree committee with hL_size = 3 we need 3*n parameters
     n = Int32(3*n)  
@@ -189,8 +191,13 @@ function simplex_opt(n::Int, p::Int, y::Int, d::Float64, seed::Int = -1, hL_size
 
     @info "Es before: $Es"
 
+    counter = 0
+    
     ## One step of the algorithm (TODO: put this in an optimization loop)
     while !any([x == 0 for x in Es])
+        counter += 1
+        
+
         E_worst, i_worst = findmax(Es)
 
         @info "replacing $i_worst"
@@ -203,10 +210,13 @@ function simplex_opt(n::Int, p::Int, y::Int, d::Float64, seed::Int = -1, hL_size
             @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
             E_new = Es[i_worst]
         end
+        io = open(filename, "a")
+        println(io, counter, " ", mean(Es))
+        close(io)
 
         @info "Es after: $Es"
     end
-
+    
     ## TODO ...
     return Es
 end
