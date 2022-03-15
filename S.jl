@@ -24,8 +24,6 @@ function energy(p::Vector, hL_size, trainset, trainlabels)
 end
 
 
-
-
 function new_point(ps::Matrix, d::Float64)
     n, y = size(ps)
     @assert y ≤ n
@@ -141,6 +139,7 @@ function replace_point!(
     ## to the height of a regular simplex with
     ## y points and size d
     normalize!(x)
+
     x .*= d * √(y / (2*(y-1)))
 
     ## new point
@@ -157,10 +156,13 @@ end
 
 
 
-function simplex_opt(n::Int, p::Int, y::Int, d::Float64, seed::Int = -1, hL_size::Int = 3) ## TODO: add arguments etc.
+function simplex_opt(n::Int, 
+    p::Int, y::Int, d::Float64, 
+    seed::Int = -1, hL_size::Int = 3, 
+    rescale::Int = 20, rescale_factor::Float64 = 0.9) ## TODO: add arguments etc.
 
 
-    filename = string("run_n_", n, "_p_", p, "_d_", d, "_y_", y, ".txt")
+    filename = string("run_n_", n, "_p_", p, "_d_", d, "_y_", y, "_dscale_",rescale_factor, ".txt")
     trainset, trainlabels = dataset(n,p)
     #n here is the input size, for a tree committee with hL_size = 3 we need 3*n parameters
     n = Int32(3*n)  
@@ -203,13 +205,33 @@ function simplex_opt(n::Int, p::Int, y::Int, d::Float64, seed::Int = -1, hL_size
         @info "replacing $i_worst"
         ## Find a new point with lower energy
         E_new = E_worst
+        stop_count = 0
         while E_new ≥ E_worst
+            stop_count += 1
+            stop_count >= 10*n && break
             replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels)
-            # @show [norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y]
+            
             ## temporary consistency check
+            #@show [norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y]
             @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
             E_new = Es[i_worst]
         end
+        stop_count >= 10*n && println("solution not found") && break
+
+        ## Rescale simplex 
+
+        if counter % rescale == 0
+            d *= rescale_factor
+            println("simplex size:", d)
+            for j=1:y
+                #ps[:,j] = normalize!(ps[:,j])
+                ps[:,j] .*= rescale_factor
+            end
+            vsum = vec(sum(ps, dims=2))
+            #@show [norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y]
+            @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
+        end
+
         io = open(filename, "a")
         println(io, counter, " ", mean(Es))
         close(io)
