@@ -228,8 +228,8 @@ function simplex_opt(n::Int,
             println("simplex size:", d)
             for j=1:y
                 #ps[:,j] = normalize!(ps[:,j])
-                #ps[:,j] .= c .+ rescale_factor.*(ps[:,j] .- c) ##shrink towards the center
-                ps[:,j] .= ps[:,i_best] .+ rescale_factor.*(ps[:,j] .- ps[:,i_best]) ##shrink towards the center
+                ps[:,j] .= c .+ rescale_factor.*(ps[:,j] .- c) ##shrink towards the center
+                #ps[:,j] .= ps[:,i_best] .+ rescale_factor.*(ps[:,j] .- ps[:,i_best]) ##shrink towards the best direction
             end
             vsum = vec(sum(ps, dims=2))
             Es = [energy(ps[:,i], hL_size, trainset, trainlabels) for i = 1:y]
