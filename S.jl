@@ -155,11 +155,10 @@ function replace_point!(
 end
 
 
-
 function simplex_opt(n::Int, 
     p::Int, y::Int, d::Float64, 
-    seed::Int = -1, hL_size::Int = 3, 
-    rescale::Int = 20, rescale_factor::Float64 = 0.9) ## TODO: add arguments etc.
+    seed::Int = -1, hL_size::Int = 3;
+    rescale::Int = 100, rescale_factor::Float64 = 0.5) ## TODO: add arguments etc.
 
 
     filename = string("run_n_", n, "_p_", p, "_d_", d, "_y_", y, "_dscale_",rescale_factor, ".txt")
@@ -190,8 +189,11 @@ function simplex_opt(n::Int,
 
     ## Energies
     Es = [energy(ps[:,i], hL_size, trainset, trainlabels) for i = 1:y]
+    center_energy = energy(vsum/y,hL_size, trainset, trainlabels )
+  
 
-    @info "Es before: $Es"
+
+    @info "Center energy: $center_energy Es before: $Es"
 
     counter = 0
     
@@ -201,14 +203,14 @@ function simplex_opt(n::Int,
         
 
         E_worst, i_worst = findmax(Es)
-
+        E_best, i_best = findmax(Es)
         @info "replacing $i_worst"
         ## Find a new point with lower energy
         E_new = E_worst
         stop_count = 0
         while E_new ≥ E_worst
             stop_count += 1
-            stop_count >= 10*n && break
+            stop_count == rescale && break
             replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels)
             
             ## temporary consistency check
@@ -216,18 +218,22 @@ function simplex_opt(n::Int,
             @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
             E_new = Es[i_worst]
         end
-        stop_count >= 10*n && println("solution not found") && break
+        #stop_count >= 10*n && (println("solution not found") && break)
 
         ## Rescale simplex 
 
-        if counter % rescale == 0
+        if stop_count % rescale == 0
+            c = vsum/y
             d *= rescale_factor
             println("simplex size:", d)
             for j=1:y
                 #ps[:,j] = normalize!(ps[:,j])
-                ps[:,j] .*= rescale_factor
+                #ps[:,j] .= c .+ rescale_factor.*(ps[:,j] .- c) ##shrink towards the center
+                ps[:,j] .= ps[:,i_best] .+ rescale_factor.*(ps[:,j] .- ps[:,i_best]) ##shrink towards the center
             end
             vsum = vec(sum(ps, dims=2))
+            Es = [energy(ps[:,i], hL_size, trainset, trainlabels) for i = 1:y]
+            center_energy = energy(vsum/y,hL_size, trainset, trainlabels )
             #@show [norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y]
             @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
         end
@@ -236,7 +242,7 @@ function simplex_opt(n::Int,
         println(io, counter, " ", mean(Es))
         close(io)
 
-        @info "Es after: $Es"
+        @info "Center energy: $center_energy Es after: $Es"
     end
     
     ## TODO ...
