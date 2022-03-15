@@ -6,23 +6,42 @@ using Random
 
 function dataset(n::Int, p::Int)
     trainset = randn(n, p)
-    trainlabels = [rand(1:2) > 1 ? -1 : 1 for i in 1:p]
+    trainlabels = rand((-1,1), p)
     return trainset, trainlabels
 end
 
-## TODO: implement a real energy function, this is a silly placeholder
-function energy(p::Vector, hL_size, trainset, trainlabels)
-    fakep = reshape(p, (Int(length(p)/hL_size), hL_size))
-    errors = 0
-    for i in 1:length(trainlabels)
-        out = sign(sum([sum(trainset[:,i].*fakep[:,j]) for j in 1:hL_size]))  
-        if out != trainlabels[i]
-            errors += 1
-        end
-    end
-    return errors/length(trainlabels)
-end
+function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
+    n = length(w)
+    p = length(trainlabels)
+    @assert n % K == 0
+    @assert size(trainset) == (n, p)
+    nh = n ÷ K # inputs per hidden unit
 
+    W = reshape(w, nh, K)
+    X = reshape(trainset, nh, K, p)
+
+    errors = 0
+    @inbounds for μ = 1:p
+        Δ = 0
+        for j = 1:K
+            Δj = 0.0
+            for i = 1:nh
+                Δj += W[i, j] * X[i, j, μ]
+            end
+            Δ += sign(Δj)
+        end
+        outμ = sign(Δ)
+        errors += (outμ ≠ trainlabels[μ])
+    end
+
+    ## vectorized broadcasted version: slower than the explicit for loops, and allocates
+    ## TODO? try Tullio.jl
+
+    # errors2 = sum(vec(sign.(sum(sign.(sum(W .* X, dims=1)), dims=2))) .≠ trainlabels)
+    # @assert errors == errors2
+
+    return errors / p
+end
 
 function new_point(ps::Matrix, d::Float64)
     n, y = size(ps)
@@ -72,14 +91,14 @@ end
 
 
 function replace_point!(
-        ps::Matrix,   # input points (in a matrix, each column is a point)
-        vsum::Vector, # sum of all the points
-        Es::Vector,   # energy of each point
-        i_worst::Int, # index of the point to substitute
-        d::Float64,    # pairwise points distance
-        trainset,
-        trainlabels,
-        hL_size::Int = 3,
+        ps::Matrix,           # input points (in a matrix, each column is a point)
+        vsum::Vector,         # sum of all the points
+        Es::Vector,           # energy of each point
+        i_worst::Int,         # index of the point to substitute
+        d::Float64,           # pairwise points distance
+        trainset::Matrix,
+        trainlabels::Vector,
+        K::Int = 3,
     )
     n, y = size(ps)
     @assert y+1 ≤ n
@@ -113,8 +132,8 @@ function replace_point!(
         k == y-2 && break
     end
     ## debug checks
-    @assert all(norm(b[:,i]) ≈ 1 for i = 1:(y-2)) # normalization
-    @assert maximum(abs.([b[:,i] ⋅ b[:,j] for i = 1:(y-2), j = 1:(y-2)] - I)) < 1e-12 # orthogonality
+    # @assert all(norm(b[:,i]) ≈ 1 for i = 1:(y-2)) # normalization
+    # @assert maximum(abs.([b[:,i] ⋅ b[:,j] for i = 1:(y-2), j = 1:(y-2)] - I)) < 1e-12 # orthogonality
 
     ## generate a random direction
     x = randn(n)
@@ -125,7 +144,7 @@ function replace_point!(
         dir = b[:,i]
         x .-= (x ⋅ dir) * dir
     end
-    @assert maximum(abs.(x ⋅ b[:,i] for i = 1:(y-2))) < 1e-12
+    # @assert maximum(abs.(x ⋅ b[:,i] for i = 1:(y-2))) < 1e-12
 
     ## old point
     old_p = ps[:,i_worst]
@@ -139,7 +158,6 @@ function replace_point!(
     ## to the height of a regular simplex with
     ## y points and size d
     normalize!(x)
-
     x .*= d * √(y / (2*(y-1)))
 
     ## new point
@@ -149,28 +167,29 @@ function replace_point!(
     ps[:,i_worst] = new_p
     vsum .= vcav .+ new_p
 
-    Es[i_worst] = energy(new_p, hL_size, trainset, trainlabels)
+    Es[i_worst] = energy(new_p, K, trainset, trainlabels)
 
     return
 end
 
 
-function simplex_opt(n::Int, 
-    p::Int, y::Int, d::Float64, 
-    seed::Int = -1, hL_size::Int = 3;
-    rescale::Int = 100, rescale_factor::Float64 = 0.5) ## TODO: add arguments etc.
-
-
-    filename = string("run_n_", n, "_p_", p, "_d_", d, "_y_", y, "_dscale_",rescale_factor, ".txt")
-    trainset, trainlabels = dataset(n,p)
-    #n here is the input size, for a tree committee with hL_size = 3 we need 3*n parameters
-    n = Int32(3*n)  
-
+function simplex_opt(
+        n::Int,
+        p::Int,
+        y::Int;
+        K::Int = 3,
+        d::Float64 = Float64(n),
+        seed::Int = 411068089483816338,
+        max_attempts::Int = 100,
+        rescale_factor::Float64 = 0.5
+    )
 
     seed > 0 && Random.seed!(seed)
-    #n = 10
-    #y = 5
-    #d = 3.0
+
+    filename = "run.n_$n.p_$p.y_$y.d_$d.df_$rescale_factor.txt"
+
+    trainset, trainlabels = dataset(n, p)
+    # n here is the input size, for a tree committee with hL_size = 3 we need 3*n parameters
 
     ## Create the initial y points
     ## Generate the first point at random
@@ -188,65 +207,69 @@ function simplex_opt(n::Int,
     vsum = vec(sum(ps, dims=2))
 
     ## Energies
-    Es = [energy(ps[:,i], hL_size, trainset, trainlabels) for i = 1:y]
-    center_energy = energy(vsum/y,hL_size, trainset, trainlabels )
-  
+    Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
+    Ec = energy(vsum / y, K, trainset, trainlabels)
+    E_best = minimum(Es)
 
+    @info "it = 0 Ec = $Ec Emin = $E_best Es = $Es"
 
-    @info "Center energy: $center_energy Es before: $Es"
-
-    counter = 0
-    
-    ## One step of the algorithm (TODO: put this in an optimization loop)
-    while !any([x == 0 for x in Es])
-        counter += 1
-        
-
+    it = 0
+    while all(Es .> 0) && Ec > 0
+        it += 1
         E_worst, i_worst = findmax(Es)
-        E_best, i_best = findmax(Es)
         @info "replacing $i_worst"
         ## Find a new point with lower energy
         E_new = E_worst
-        stop_count = 0
-        while E_new ≥ E_worst
-            stop_count += 1
-            stop_count == rescale && break
-            replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels)
-            
+        p_bk, E_bk = ps[:,i_worst], Es[i_worst]
+        for attempt = 1:max_attempts
+            replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
             ## temporary consistency check
-            #@show [norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y]
-            @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
+            # @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
             E_new = Es[i_worst]
+            E_new < E_worst && break
         end
-        #stop_count >= 10*n && (println("solution not found") && break)
 
-        ## Rescale simplex 
-
-        if stop_count % rescale == 0
-            c = vsum/y
-            d *= rescale_factor
-            println("simplex size:", d)
-            for j=1:y
-                #ps[:,j] = normalize!(ps[:,j])
-                ps[:,j] .= c .+ rescale_factor.*(ps[:,j] .- c) ##shrink towards the center
-                #ps[:,j] .= ps[:,i_best] .+ rescale_factor.*(ps[:,j] .- ps[:,i_best]) ##shrink towards the best direction
-            end
+        success = E_new < E_worst
+        if !success
+            ## restore the previous worst point
+            ps[:,i_worst] = p_bk
+            Es[i_worst] = E_bk
             vsum = vec(sum(ps, dims=2))
-            Es = [energy(ps[:,i], hL_size, trainset, trainlabels) for i = 1:y]
-            center_energy = energy(vsum/y,hL_size, trainset, trainlabels )
-            #@show [norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y]
-            @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
         end
 
-        io = open(filename, "a")
-        println(io, counter, " ", mean(Es))
-        close(io)
+        c = vsum / y
+        Ec = energy(c, K, trainset, trainlabels)
+        E_best, i_best = findmin(Es)
+        @info "it = $it d = $d Ec = $Ec Emin = $E_best Es = $Es"
 
-        @info "Center energy: $center_energy Es after: $Es"
+        success && continue
+
+        if d ≤ 1e-4
+            @info "failed, giving up"
+            break
+        end
+
+        ## Random attempts failed: rescale simplex
+
+        @info "resampling failed, rescale simplex $d -> $(d * rescale_factor)"
+
+        d *= rescale_factor
+        ref = Ec ≤ E_best ? c : ps[:,i_best]
+        for j = 1:y
+            ps[:,j] .= ref .+ rescale_factor .* (ps[:,j] .- ref)
+        end
+        vsum = vec(sum(ps, dims=2))
+        Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
+        Ec = energy(vsum / y, K, trainset, trainlabels)
+        @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
+
+        # open(filename, "a") do io
+        #     println(io, "it = $it d = $d Ec = $Ec Es = $Es")
+        # end
+
     end
-    
-    ## TODO ...
-    return Es
+
+    return ps, Ec, Es
 end
 
 
