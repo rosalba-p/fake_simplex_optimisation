@@ -114,15 +114,15 @@ n, y = size(ps)
 old_p = ps[:,i_worst]
 
 ## barycenter, including the point to be removed
-vcent = vsum
-center = vcent / y
+
+center = vsum / y
 
 ## barycenter, excluding the point to be removed
 vcav = vsum - old_p
 c = vcav / (y - 1)
 
 ## generate direction from center to worst point
-x = center - old_p 
+x = c - old_p 
 
 ## rescale x so that its length corresponds
 ## to the height of a regular simplex with
@@ -131,7 +131,7 @@ normalize!(x)
 x .*= d * √(y / (2*(y-1)))
 
 ## new point
-new_p = center + x
+new_p = c + x
 
 ## update the input structures
 ps[:,i_worst] = new_p
