@@ -124,7 +124,6 @@ c = vcav / (y - 1)
 ## generate direction from center to worst point
 x = c - old_p 
 
-
 ## rescale x so that its length corresponds
 ## to the height of a regular simplex with
 ## y points and size d
@@ -279,11 +278,7 @@ function simplex_opt(
         E_new = E_worst
         p_bk, E_bk = ps[:,i_worst], Es[i_worst]
         for attempt = 1:max_attempts
-            if d > original_distance/2
-                replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
-            else 
-                replace_point_lin!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
-            end
+            replace_point_lin!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
             ## temporary consistency check
             @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
             E_new = Es[i_worst]
