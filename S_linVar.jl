@@ -122,7 +122,7 @@ vcav = vsum - old_p
 c = vcav / (y - 1)
 
 ## generate direction from center to worst point
-x = c - old_p 
+x = center - old_p 
 
 ## rescale x so that its length corresponds
 ## to the height of a regular simplex with
@@ -131,7 +131,7 @@ normalize!(x)
 x .*= d * √(y / (2*(y-1)))
 
 ## new point
-new_p = c + x
+new_p = center + x
 
 ## update the input structures
 ps[:,i_worst] = new_p
