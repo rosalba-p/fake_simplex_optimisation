@@ -47,7 +47,7 @@ function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
     return errors / p
 end
 
-function replace_point_lin!(
+function gen_candidate_reflected(
         ps::Matrix,           # input points (in a matrix, each column is a point)
         vsum::Vector,         # sum of all the points
         Es::Vector,           # energy of each point
@@ -58,10 +58,8 @@ function replace_point_lin!(
         K::Int = 3,
     )
     n, y = size(ps)
-    @assert y+1 ≤ n
     @assert y ≥ 2
     @assert 1 ≤ i_worst ≤ y
-
 
     ## old point
     old_p = ps[:,i_worst]
@@ -74,29 +72,15 @@ function replace_point_lin!(
     vcav = vsum - old_p
     c = vcav / (y - 1)
 
-    ## generate direction from center to worst point
-    x = c - old_p 
-
-    ## rescale x so that its length corresponds
-    ## to the height of a regular simplex with
-    ## y points and size d
-    normalize!(x)
-    x .*= d * √(y / (2*(y-1)))
-
     ## new point
-    new_p = c + x
+    new_p = 2c - old_p
+    new_E = energy(new_p, K, trainset, trainlabels)
 
-    ## update the input structures
-    ps[:,i_worst] = new_p
-    vsum .= vcav .+ new_p
-
-    Es[i_worst] = energy(new_p, K, trainset, trainlabels)
-
-    return
+    return new_p, new_E
 end
 
 
-function replace_point!(
+function gen_candidate(
         ps::Matrix,           # input points (in a matrix, each column is a point)
         vsum::Vector,         # sum of all the points
         Es::Vector,           # energy of each point
@@ -130,15 +114,9 @@ function replace_point!(
     new_E1 = energy(new_p1, K, trainset, trainlabels)
     new_E2 = energy(new_p2, K, trainset, trainlabels)
     ## new point
-    new_p = new_E1 ≤ new_E2 ? new_p1 : new_p2
+    new_p, new_E = new_E1 ≤ new_E2 ? (new_p1, new_E1) : (new_p2, new_E2)
 
-    ## update the input structures
-    ps[:,i_worst] = new_p
-    vsum .= vcav .+ new_p
-
-    Es[i_worst] = energy(new_p, K, trainset, trainlabels)
-
-    return
+    return new_p, new_E
 end
 
 
@@ -185,28 +163,25 @@ function simplex_opt(
     it = 0
     while all(Es .> 0) && Ec > 0
         it += 1
-        E_worst, i_worst = findmax(Es)
-        @info "replacing $i_worst"
+        E_worst = maximum(Es)
+        i_worst = rand(findall(Es .== E_worst))
         ## Find a new point with lower energy
         E_new = E_worst
-        p_bk, E_bk = ps[:,i_worst], Es[i_worst]
         for attempt = 1:max_attempts
-            replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
-            # replace_point_lin!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
-            ## temporary consistency check
-            # dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
-            # println("dists: $(mean(dists)) $(std(dists))")
-            E_new = Es[i_worst]
-            E_new < E_worst && break
+            # if attempt == 1
+            #     p_new, E_new = gen_candidate_reflected(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
+            # else
+                p_new, E_new = gen_candidate(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
+            # end
+            if E_new < E_worst
+                Es[i_worst] = E_new
+                vsum .+= p_new .- ps[:,i_worst]
+                ps[:, i_worst] = p_new
+                break
+            end
         end
 
         success = E_new < E_worst
-        if !success
-            ## restore the previous worst point
-            ps[:,i_worst] = p_bk
-            Es[i_worst] = E_bk
-            vsum = vec(sum(ps, dims=2))
-        end
 
         c = vsum / y
         Ec = energy(c, K, trainset, trainlabels)
