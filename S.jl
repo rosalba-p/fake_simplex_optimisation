@@ -114,8 +114,10 @@ function replace_point!(
     vcav = vsum - ps[:,i_worst]
     c = vcav / (y - 1)
 
+    # scale = norm(c) / (d / √2)
+
     ## distance from barycenter (expected)
-    ρ = d * √(y / (2 * (y - 1)))
+    ρ = norm(c) * √(y / (y - 1))
 
     ## generate a new random direction
     x = ρ / √n * randn(n)
@@ -159,12 +161,16 @@ function simplex_opt(
     # n here is the input size, for a tree committee with hL_size = 3 we need 3*n parameters
 
     ## Create the initial y points
+    ## the factors are such that the points all have norm d and
+    ## distance d between them (in expectation)
     c0 = d / √(2n) * randn(n)
-    ps = hcat((c0 + d / √(2n) * randn(n) for i = 1:y)...)
+    ps = c0 .+ (d / √(2n)) .* randn(n, y)
 
-    ## Check
-    # println([norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y])
-    # println([norm(ps[:,i]) for i = 1:y])
+    ## Print norms and distances, as a check
+    norms = [norm(ps[:,i]) for i=1:y]
+    println("norm of replicas: $(mean(norms)) ± $(std(norms))")
+    dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
+    println("dists of replicas: $(mean(dists)) ± $(std(dists))")
 
     ## Pre-compute the sum of all points
     vsum = vec(sum(ps, dims=2))
@@ -207,7 +213,9 @@ function simplex_opt(
         E_best, i_best = findmin(Es)
         @info "it = $it d = $d Ec = $Ec Emin = $E_best Es = $Es"
         norms = [norm(ps[:,i]) for i=1:y]
-        println("norm of replicas: $(mean(norms))±$(std(norms))")
+        println("norm of replicas: $(mean(norms)) ± $(std(norms))")
+        dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
+        println("dists of replicas: $(mean(dists)) ± $(std(dists))")
         success && continue
 
         if d ≤ 1e-4
