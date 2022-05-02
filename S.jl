@@ -19,7 +19,7 @@ function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
 
     W = reshape(w, nh, K)
     X = reshape(trainset, nh, K, p)
-
+    # indices = Int[]
     errors = 0
     @inbounds for μ = 1:p
         Δ = 0
@@ -31,7 +31,10 @@ function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
             Δ += sign(Δj)
         end
         outμ = sign(Δ)
-        errors += (outμ ≠ trainlabels[μ])
+        if outμ ≠ trainlabels[μ]
+            # push!(indices, μ)
+            errors += 1
+        end
     end
 
     ## vectorized broadcasted version: slower than the explicit for loops, and allocates
@@ -40,6 +43,7 @@ function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
     # errors2 = sum(vec(sign.(sum(sign.(sum(W .* X, dims=1)), dims=2))) .≠ trainlabels)
     # @assert errors == errors2
 
+    # println("error indices: $indices")
     return errors / p
 end
 
