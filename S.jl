@@ -47,52 +47,6 @@ function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
     return errors / p
 end
 
-function new_point(ps::Matrix, d::Float64)
-    n, y = size(ps)
-    @assert y ≤ n
-
-    ## barycenter
-    c = mean(ps, dims=2)
-
-    ## create a new orthonormal basis
-    ## that spans the y input points
-    ## (only y-1 points are needed)
-    b = zeros(n, y-1)
-    for i = 1:(y-1)
-        di = reduce(vcat, ps[:,i] - c)
-        if !all(di .== 0)
-            normalize!(di)
-        end
-        for j = 1:(i-1)
-            dj = b[:,j]
-            di .-= (di ⋅ dj) * dj
-        end
-        normalize!(di)
-        b[:,i] = di
-    end
-
-    ## generate a random direction
-    x = randn(n)
-
-    ## subtract the components from the
-    ## orthonormal basis
-    for i = 1:(y-1)
-        dir = b[:,i]
-        x .-= (x ⋅ dir) * dir
-    end
-
-    ## rescale x so that its length corresponds
-    ## to the height of a regular simplex with
-    ## y+1 points and size d
-    normalize!(x)
-    x .*= d * √((y + 1) / 2y)
-
-    ## new point
-    new_p = c + x
-
-    return new_p
-end
-
 function replace_point_lin!(
         ps::Matrix,           # input points (in a matrix, each column is a point)
         vsum::Vector,         # sum of all the points
@@ -153,7 +107,6 @@ function replace_point!(
         K::Int = 3,
     )
     n, y = size(ps)
-    @assert y+1 ≤ n
     @assert y ≥ 2
     @assert 1 ≤ i_worst ≤ y
 
@@ -161,59 +114,21 @@ function replace_point!(
     vcav = vsum - ps[:,i_worst]
     c = vcav / (y - 1)
 
-    ## create a new orthonormal basis
-    ## that spans the y-1 remaining input points
-    ## (only y-2 points are needed; we loop over
-    ## all y points but we skip the i_worst one and
-    ## we also just get out after y-2 points)
-    b = zeros(n, y-2)
-    k = 0
-    for i = 1:y
-        i == i_worst && continue
-        k += 1
-        di = ps[:,i] - c
-        if !all(di .== 0)
-            normalize!(di)
-        end
-        for j = 1:(k-1)
-            dj = b[:,j]
-            di .-= (di ⋅ dj) * dj
-        end
-        normalize!(di)
-        b[:,k] = di
-        k == y-2 && break
-    end
-    ## debug checks
-    # @assert all(norm(b[:,i]) ≈ 1 for i = 1:(y-2)) # normalization
-    # @assert maximum(abs.([b[:,i] ⋅ b[:,j] for i = 1:(y-2), j = 1:(y-2)] - I)) < 1e-12 # orthogonality
+    ## distance from barycenter (expected)
+    ρ = d * √(y / (2 * (y - 1)))
 
-    ## generate a random direction
-    x = randn(n)
+    ## generate a new random direction
+    x = ρ / √n * randn(n)
 
-    ## subtract the components from the
-    ## orthonormal basis
-    for i = 1:(y-2)
-        dir = b[:,i]
-        x .-= (x ⋅ dir) * dir
-    end
-    # @assert maximum(abs.(x ⋅ b[:,i] for i = 1:(y-2))) < 1e-12
-
-    ## old point
     old_p = ps[:,i_worst]
 
-    ## try to go to the opposite direction than the previous point
-    if x ⋅ (old_p - c) > 0
-        x = -x
-    end
-
-    ## rescale x so that its length corresponds
-    ## to the height of a regular simplex with
-    ## y points and size d
-    normalize!(x)
-    x .*= d * √(y / (2*(y-1)))
-
+    ## choose the best of the two directions
+    new_p1 = c + x
+    new_p2 = c - x
+    new_E1 = energy(new_p1, K, trainset, trainlabels)
+    new_E2 = energy(new_p2, K, trainset, trainlabels)
     ## new point
-    new_p = c + x
+    new_p = new_E1 ≤ new_E2 ? new_p1 : new_p2
 
     ## update the input structures
     ps[:,i_worst] = new_p
@@ -244,16 +159,12 @@ function simplex_opt(
     # n here is the input size, for a tree committee with hL_size = 3 we need 3*n parameters
 
     ## Create the initial y points
-    ## Generate the first point at random
-    ps = reshape(randn(n), (n,1))
+    c0 = d / √(2n) * randn(n)
+    ps = hcat((c0 + d / √(2n) * randn(n) for i = 1:y)...)
 
-    ## Add the remaining y-1 points
-    for i = 2:y
-        ps = hcat(ps, new_point(ps, d))
-    end
-
-    ## Check that the distances are all d off-diagonal here
-    @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
+    ## Check
+    # println([norm(ps[:,i] - ps[:,j]) for i = 1:y, j = 1:y])
+    # println([norm(ps[:,i]) for i = 1:y])
 
     ## Pre-compute the sum of all points
     vsum = vec(sum(ps, dims=2))
@@ -277,7 +188,8 @@ function simplex_opt(
             replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
             # replace_point_lin!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
             ## temporary consistency check
-            # @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
+            # dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
+            # println("dists: $(mean(dists)) $(std(dists))")
             E_new = Es[i_worst]
             E_new < E_worst && break
         end
@@ -294,7 +206,8 @@ function simplex_opt(
         Ec = energy(c, K, trainset, trainlabels)
         E_best, i_best = findmin(Es)
         @info "it = $it d = $d Ec = $Ec Emin = $E_best Es = $Es"
-        println("norm of replicas: ", mean([norm(ps[:,i]) for i=1:y]))
+        norms = [norm(ps[:,i]) for i=1:y]
+        println("norm of replicas: $(mean(norms))±$(std(norms))")
         success && continue
 
         if d ≤ 1e-4
@@ -314,7 +227,6 @@ function simplex_opt(
         vsum = vec(sum(ps, dims=2))
         Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
         Ec = energy(vsum / y, K, trainset, trainlabels)
-        @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
 
         # open(filename, "a") do io
         #     println(io, "it = $it d = $d Ec = $Ec Es = $Es")
