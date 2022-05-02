@@ -93,6 +93,54 @@ function new_point(ps::Matrix, d::Float64)
     return new_p
 end
 
+function replace_point_lin!(
+        ps::Matrix,           # input points (in a matrix, each column is a point)
+        vsum::Vector,         # sum of all the points
+        Es::Vector,           # energy of each point
+        i_worst::Int,         # index of the point to substitute
+        d::Float64,           # pairwise points distance
+        trainset::Matrix,
+        trainlabels::Vector,
+        K::Int = 3,
+    )
+    n, y = size(ps)
+    @assert y+1 ≤ n
+    @assert y ≥ 2
+    @assert 1 ≤ i_worst ≤ y
+
+
+    ## old point
+    old_p = ps[:,i_worst]
+
+    ## barycenter, including the point to be removed
+
+    center = vsum / y
+
+    ## barycenter, excluding the point to be removed
+    vcav = vsum - old_p
+    c = vcav / (y - 1)
+
+    ## generate direction from center to worst point
+    x = c - old_p 
+
+    ## rescale x so that its length corresponds
+    ## to the height of a regular simplex with
+    ## y points and size d
+    normalize!(x)
+    x .*= d * √(y / (2*(y-1)))
+
+    ## new point
+    new_p = c + x
+
+    ## update the input structures
+    ps[:,i_worst] = new_p
+    vsum .= vcav .+ new_p
+
+    Es[i_worst] = energy(new_p, K, trainset, trainlabels)
+
+    return
+end
+
 
 function replace_point!(
         ps::Matrix,           # input points (in a matrix, each column is a point)
@@ -227,6 +275,7 @@ function simplex_opt(
         p_bk, E_bk = ps[:,i_worst], Es[i_worst]
         for attempt = 1:max_attempts
             replace_point!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
+            # replace_point_lin!(ps, vsum, Es, i_worst, d, trainset, trainlabels, K)
             ## temporary consistency check
             # @assert all([norm(ps[:,i] - ps[:,j]) ≈ (i==j ? 0.0 : d) for i = 1:y, j = 1:y])
             E_new = Es[i_worst]
