@@ -245,7 +245,7 @@ function simplex_opt(
         Ec = energy(c, K, trainset, trainlabels)
         E_best, i_best = findmin(Es)
         @info "it = $it d = $d Ec = $Ec Emin = $E_best Es = $Es"
-
+        println("norm of replicas: ", mean([norm(ps[:,i]) for i=1:y]))
         success && continue
 
         if d ≤ 1e-4
