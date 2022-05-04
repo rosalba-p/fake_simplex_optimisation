@@ -48,44 +48,12 @@ function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
     return errors
 end
 
-function gen_candidate_reflected(
-        ps::Matrix,           # input points (in a matrix, each column is a point)
-        vsum::Vector,         # sum of all the points
-        Es::Vector,           # energy of each point
-        i_worst::Int,         # index of the point to substitute
-        d::Float64,           # pairwise points distance
-        trainset::Matrix,
-        trainlabels::Vector,
-        K::Int = 3,
-    )
-    n, y = size(ps)
-    @assert y ≥ 2
-    @assert 1 ≤ i_worst ≤ y
-
-    ## old point
-    old_p = ps[:,i_worst]
-
-    ## barycenter, including the point to be removed
-
-    center = vsum / y
-
-    ## barycenter, excluding the point to be removed
-    vcav = vsum - old_p
-    c = vcav / (y - 1)
-
-    ## new point
-    new_p = 2c - old_p
-    new_E = energy(new_p, K, trainset, trainlabels)
-
-    return new_p, new_E
-end
-
-
 function gen_candidate(
         ps::Matrix,           # input points (in a matrix, each column is a point)
         vsum::Vector,         # sum of all the points
         ws::Vector,
         wz::Float64,
+        α::Float64,
         i_sub::Int,         # index of the point to substitute
         d::Float64,           # pairwise points distance
         trainset::Matrix,
@@ -100,21 +68,24 @@ function gen_candidate(
     w_old = ws[i_sub]
 
     ## barycenter, excluding the point to be removed
-    vcav = vsum - (p_old .* w_old)
-    wzcav = wz - w_old
-    c = vcav / wzcav
+    vcav = vsum - (p_old .* w_old.^α)
+    wzcav = wz - w_old.^α
+    ccav = vcav / wzcav
 
-    # scale = norm(c) / (d / √2)
+    # scale = norm(ccav) / (d / √2)
 
     ## distance from barycenter (expected)
-    ρ = d * norm(c) * √(y / (y - 1))
+    ρ = d * norm(ccav) / √(1 - d^2 / 2) * √(y / (2*(y - 1)))
 
     ## generate a new random direction
     x = ρ / √n * randn(n)
+    # @show norm(ccav + x), norm(ccav - x)
+    # dists = [norm(ccav + x - ps[:,j]) for j = 1:y if j ≠ i_sub]
+    # println("> dists between replicas: $(mean(dists)) ± $(std(dists))")
 
     ## choose the best of the two directions
-    p_new1 = c + x
-    p_new2 = c - x
+    p_new1 = ccav + x
+    p_new2 = ccav - x
     E_new1 = energy(p_new1, K, trainset, trainlabels)
     E_new2 = energy(p_new2, K, trainset, trainlabels)
     ## new point
@@ -131,12 +102,14 @@ function simplex_opt(
         K::Int = 3,
         d::Float64 = Float64(n),
         seed::Int = 411068089483816338,
-        max_attempts::Int = 100,
+        max_attempts::Int = 1_000,
         rescale_factor::Float64 = 0.99,
-        β₀::Float64 = 1.0,
-        Δβ::Float64 = 0.1,
-        α::Float64 = 1.0
+        β₀::Float64 = 0.0,
+        Δβ::Float64 = 1e-3,
+        α::Float64 = 0.0
     )
+
+    @assert 0 ≤ d ≤ √2
 
     seed > 0 && Random.seed!(seed)
 
@@ -146,16 +119,10 @@ function simplex_opt(
     # n here is the input size, for a tree committee with hL_size = 3 we need 3*n parameters
 
     ## Create the initial y points
-    ## the factors are such that the points all have norm d and
+    ## the factors are such that the points all have norm 1 and
     ## distance d between them (in expectation)
-    c0 = 1 / √(2n) * randn(n)
+    c0 = √((1 - d^2 / 2) / n) * randn(n)
     ps = c0 .+ (d / √(2n)) .* randn(n, y)
-
-    ## Print norms and distances, as a check
-    norms = [norm(ps[:,i]) for i=1:y]
-    println("norm of replicas: $(mean(norms)) ± $(std(norms))")
-    dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
-    println("dists of replicas: $(mean(dists)) ± $(std(dists))")
 
     β = β₀
 
@@ -163,6 +130,7 @@ function simplex_opt(
     Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
     E_best, E_worst = extrema(Es)
 
+    ## Weights
     ws = [exp(-β * (E-E_worst)) for E in Es]
     wz = sum(ws.^α)
 
@@ -173,29 +141,24 @@ function simplex_opt(
     c = vsum / wz
 
     Ec = energy(c, K, trainset, trainlabels)
-    @info "it = 0 d = $d β = $β Ec = $(Ec/p) Emin = $(E_best/p) Es = $(Es/p)"
+    @info "it = 0 d = $d β = $β Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]"
+    norms = [norm(ps[:,i]) for i=1:y]
+    println("norm of replicas: $(mean(norms)) ± $(std(norms))")
+    dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
+    println("dists between replicas: $(mean(dists)) ± $(std(dists))")
+
 
     it = 0
     while all(Es .> 0) && Ec > 0
         it += 1
         E_worst = maximum(Es)
-        # i_sub = rand(findall(Es .== E_worst))
         ## Find a new point with lower energy
         failed = true
         for attempt = 1:max_attempts
             i_sub = sample(1:n, Weights(1 ./ ws))
             E_sub = Es[i_sub]
-            # @show ws / sum(ws)
-            # @show E_sub, E_worst, Es
-            # @assert E_sub == E_worst
-            # if attempt == max_attempts
-            #     p_new, E_new = gen_candidate_reflected(ps, vsum, Es, i_sub, d, trainset, trainlabels, K)
-            # else
-                p_new, E_new = gen_candidate(ps, vsum, ws, wz, i_sub, d, trainset, trainlabels, K)
-            # end
-            if E_new < E_worst # || rand() < exp(-β * p * (E_new - E_sub))
-
-                # p_old, E_old = ps[:,i_sub], E_sub
+            p_new, E_new = gen_candidate(ps, vsum, ws, wz, α, i_sub, d, trainset, trainlabels, K)
+            if E_new < E_worst
                 Es[i_sub] = E_new
                 E_worst = maximum(Es)
 
@@ -206,88 +169,61 @@ function simplex_opt(
                 c = vsum / wz
                 Ec = energy(c, K, trainset, trainlabels)
 
-                # w_new, w_old = exp(-β * (E_new - E_worst)), ws[i_sub]
-                # vsum .+= (p_new .* w_new.^α) .- (p_old .* w_old.^α)
-                # wz += w_new.^α - w_old.^α
-                # ps[:, i_sub] = p_new
                 failed = false
-                # break
-                # i_sub = rand(findall(Es .== E_worst))
             end
         end
 
-        # if it % 100 == 0
-            β += Δβ
-            ws = [exp(-β * (E - E_worst)) for E in Es]
-            wz = sum(ws.^α)
-            vsum = vec(sum(ps .* ((ws').^α), dims=2))
-            c = vsum / wz
-            Ec = energy(c, K, trainset, trainlabels)
-        # end
+        ps ./= norm(c) / √(1 - d^2 / 2)
+        # ps ./= √(norm(c)^2 + d^2 / 2)
 
-        E_best = minimum(Es)
-        @info "it = $it d = $d β = $β Ec = $(Ec/p) Emin = $(E_best/p) Es = $(Es/p)"
-        norms = [norm(ps[:,i]) for i=1:y]
-        println("norm of replicas: $(mean(norms)) ± $(std(norms))")
-        dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
-        println("dists of replicas: $(mean(dists)) ± $(std(dists))")
-
-        d *= rescale_factor
-
-        failed || continue
-
-        # if d ≤ 1e-4
-        #     @info "failed, giving up"
-        #     break
-        # end
-
-        # @info "give up"
-        # break
-
-        if it ≥ 1_000
-            @info "failed, giving up"
-            break
-        end
-
-        ## Random attempts failed: rescale simplex
-
-        # @info "resampling failed, rescale simplex $d -> $(d * rescale_factor)"
-
-        # d *= rescale_factor
-        # ref = Ec ≤ E_best ? c : ps[:,i_best]
-        # for j = 1:y
-        #     ps[:,j] .= ref .+ rescale_factor .* (ps[:,j] .- ref)
-        # end
-        @info "resampling failed, reshuffle"
-        c0 = c / (√2 * norm(c))
-        ps = c0 .+ (d / √(2n)) .* randn(n, y)
-
-        norms = [norm(ps[:,i]) for i=1:y]
-        println("norm of replicas: $(mean(norms)) ± $(std(norms))")
-        dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
-        println("dists of replicas: $(mean(dists)) ± $(std(dists))")
-
-        Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
-
-        E_best, E_worst = extrema(Es)
-
-        ws = [exp(-β * (E-E_worst)) for E in Es]
+        β += Δβ
+        ws = [exp(-β * (E - E_worst)) for E in Es]
         wz = sum(ws.^α)
         vsum = vec(sum(ps .* ((ws').^α), dims=2))
         c = vsum / wz
         Ec = energy(c, K, trainset, trainlabels)
 
-        # open(filename, "a") do io
-        #     println(io, "it = $it d = $d Ec = $Ec Es = $Es")
-        # end
+        @info "it = $it d = $d β = $β Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]"
+        norms = [norm(ps[:,i]) for i=1:y]
+        println("norm of replicas: $(mean(norms)) ± $(std(norms))")
+        dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
+        println("dists between replicas: $(mean(dists)) ± $(std(dists))")
+
+        d *= rescale_factor
+
+        failed || continue
+
+        if d < 1e-4
+            @info "give up"
+            break
+        end
+
+        # @info "resampling failed, reshuffle"
+        # c0 = c / (√2 * norm(c))
+        # ps = c0 .+ (d / √(2n)) .* randn(n, y)
+        #
+        # norms = [norm(ps[:,i]) for i=1:y]
+        # println("norm of replicas: $(mean(norms)) ± $(std(norms))")
+        # dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
+        # println("dists of replicas: $(mean(dists)) ± $(std(dists))")
+        #
+        # Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
+        #
+        # E_best, E_worst = extrema(Es)
+        #
+        # ws = [exp(-β * (E-E_worst)) for E in Es]
+        # wz = sum(ws.^α)
+        # vsum = vec(sum(ps .* ((ws').^α), dims=2))
+        # c = vsum / wz
+        # Ec = energy(c, K, trainset, trainlabels)
+        #
+        # # open(filename, "a") do io
+        # #     println(io, "it = $it d = $d Ec = $Ec Es = $Es")
+        # # end
 
     end
 
     return ps, Ec, Es
 end
-
-
-
-
 
 end # module
