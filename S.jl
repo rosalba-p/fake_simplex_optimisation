@@ -102,7 +102,7 @@ function simplex_opt(
         K::Int = 3,
         d::Float64 = Float64(n),
         seed::Int = 411068089483816338,
-        max_attempts::Int = 1_000,
+        iters::Int = 1_000,
         rescale_factor::Float64 = 0.99,
         β₀::Float64 = 0.0,
         Δβ::Float64 = 1e-3,
@@ -154,8 +154,8 @@ function simplex_opt(
         E_worst = maximum(Es)
         ## Find a new point with lower energy
         failed = true
-        for attempt = 1:max_attempts
-            i_sub = sample(1:n, Weights(1 ./ ws))
+        for attempt = 1:iters
+            i_sub = sample(1:y, Weights(1 ./ ws))
             E_sub = Es[i_sub]
             p_new, E_new = gen_candidate(ps, vsum, ws, wz, α, i_sub, d, trainset, trainlabels, K)
             if E_new < E_worst
