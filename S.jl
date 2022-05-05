@@ -88,13 +88,16 @@ function simplex_opt(
         p::Int,
         y::Int;
         K::Int = 3,
-        d::Float64 = 1.0,
+        d₀::Float64 = 1.0,
         seed::Int = 411068089483816338,
         iters::Int = 1_000,
         rescale_factor::Float64 = 0.99,
+        max_failures::Integer = 5,
     )
 
-    @assert 0 ≤ d ≤ √2
+    @assert 0 ≤ d₀ ≤ √2
+
+    d = d₀
 
     seed > 0 && Random.seed!(seed)
 
@@ -128,6 +131,7 @@ function simplex_opt(
 
 
     it = 0
+    failures = 0
     while all(Es .> 0) && Ec > 0
         it += 1
         E_worst = maximum(Es)
@@ -147,7 +151,14 @@ function simplex_opt(
                 Ec = energy(c, K, trainset, trainlabels)
 
                 failed = false
+                (E_new == 0 || Ec == 0) && break
             end
+        end
+
+        if failed
+            failures += 1
+        else
+            failures = 0
         end
 
         scale = norm(c) / √(1 - d^2 / 2)
@@ -157,7 +168,7 @@ function simplex_opt(
 
         @assert Ec == energy(c, K, trainset, trainlabels)
 
-        @info "it = $it d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]"
+        @info "it = $it [$failures] d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]"
         norms = [norm(ps[:,i]) for i=1:y]
         println("norm of replicas: $(mean(norms)) ± $(std(norms))")
         dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
@@ -165,36 +176,42 @@ function simplex_opt(
 
         d *= rescale_factor
 
-        failed || continue
+        failures < max_failures && continue
 
-        if d < 1e-4
-            @info "give up"
-            break
-        end
+        # if failures ≥ max_failures
+        #     @info "failed $failures times, give up"
+        #     break
+        # end
+        #
+        # if d < 1e-4
+        #     @info "min dist reached, give up"
+        #     break
+        # end
 
-        # @info "resampling failed, reshuffle"
-        # c0 = c / (√2 * norm(c))
-        # ps = c0 .+ (d / √(2n)) .* randn(n, y)
-        #
-        # norms = [norm(ps[:,i]) for i=1:y]
-        # println("norm of replicas: $(mean(norms)) ± $(std(norms))")
-        # dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
-        # println("dists of replicas: $(mean(dists)) ± $(std(dists))")
-        #
-        # Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
-        #
-        # E_best, E_worst = extrema(Es)
-        #
-        # ws = [exp(-β * (E-E_worst)) for E in Es]
-        # wz = sum(ws.^α)
-        # vsum = vec(sum(ps .* ((ws').^α), dims=2))
-        # c = vsum / wz
-        # Ec = energy(c, K, trainset, trainlabels)
-        #
+        @info "failed $failures times, reshuffle"
+
+        failures = 0
+
+        d = 1.0
+
+        c0 = c
+        ps = c0 .+ (d / √(2n)) .* randn(n, y)
+
+        norms = [norm(ps[:,i]) for i=1:y]
+        println("norm of replicas: $(mean(norms)) ± $(std(norms))")
+        dists = [norm(ps[:,i] - ps[:,j]) for i = 1:y for j = (i+1):y]
+        println("dists of replicas: $(mean(dists)) ± $(std(dists))")
+
+        Es = [energy(ps[:,i], K, trainset, trainlabels) for i = 1:y]
+        E_best, E_worst = extrema(Es)
+
+        vsum = vec(sum(ps, dims=2))
+        c = vsum / y
+        Ec = energy(c, K, trainset, trainlabels)
+
         # # open(filename, "a") do io
         # #     println(io, "it = $it d = $d Ec = $Ec Es = $Es")
         # # end
-
     end
 
     return ps, Ec, Es
