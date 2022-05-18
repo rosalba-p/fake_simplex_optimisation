@@ -10,6 +10,13 @@ function dataset(n::Int, p::Int)
     return trainset, trainlabels
 end
 
+function teacher_dataset(n::Int, p::Int, teacher::Vector)
+    trainset = randn(n, p)
+    mult_mat = teacher.*trainset
+    trainlabels = [sign(sum(mult_mat[:,i])) for i=1:p]
+    return trainset, trainlabels
+end
+
 function energy(w::Vector, K::Int, trainset::Matrix, trainlabels::Vector)
     n = length(w)
     p = length(trainlabels)
@@ -84,26 +91,46 @@ function simplex_chain(
         iters::Int = 1_000,
         rescale_factor::Float64 = 0.99,
         max_failures::Integer = 5,
+        verbose::Bool = false,
+        teacher::Bool = false,
+        p_test::Int = 1000,
     )
 
     @assert 0 ≤ d₀ ≤ √2
 
     d = d₀
 
+    if verbose
+        dirname = "runs" * (teacher ? "_teacher" : "")
+        mkpath(dirname)
+        filename = joinpath(dirname, "run_n_$(n)_p_$(p)_y_$(y)_k_$(K)_d_$(d)_df_$(rescale_factor).txt")
+        open(filename, "a") do io
+            println(io, "#it, d, Ec, Eworst, Ebest, Ec" * (teacher ? " test" : ""))
+        end
+    end
+
     seed > 0 && Random.seed!(seed)
 
-    trainset, trainlabels = dataset(n, p)
+    if teacher
+        W_teacher = randn(n)
+        trainset, trainlabels = teacher_dataset(n, p, W_teacher)
+        testset, testlabels = teacher_dataset(n, p_test, W_teacher)
+    else
+        trainset, trainlabels = dataset(n, p)
+        testset, testlabels = zeros(n,0), zeros(0)
+    end
 
     c = √((1 - d^2 / 2) / n) * randn(n)
 
     Ec = energy(c, K, trainset, trainlabels)
+    testEc = teacher ? energy(c, K, testset, testlabels) : 0.0
 
     Es = [typemax(Int) for j = 1:y]
     norms = ones(y)
 
     E_best, E_worst = extrema(Es)
 
-    @info "it = 0 d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]"
+    @info "it = 0 d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]" * (teacher ? " $testEc" : "")
     println("norms: $(mean(norms)) ± $(std(norms))")
 
     ind = 1
@@ -113,6 +140,9 @@ function simplex_chain(
     while all(Es .> 0) && Ec > 0
         it += 1
         E_worst = maximum(Es)
+        verbose && open(filename, "a") do io
+            println(io, "$it $d $Ec $E_worst $(minimum(Es))" * (teacher ? " $testEc" : ""))
+        end
         failed = true
         for attempt = 1:iters
             p_new, E_new = gen_candidate(c, d, trainset, trainlabels, K)
@@ -122,9 +152,17 @@ function simplex_chain(
                 norms[ind] = norm(p_new)
                 c = (y - 1) / y * c + 1 / y * p_new
                 Ec = energy(c, K, trainset, trainlabels)
+                testEc = teacher ? energy(c, K, testset, testlabels) : 0.0
                 failed = false
                 ind = mod1(ind + 1, y)
-                Ec == 0 && break
+                if Ec == 0
+                    if verbose
+                        open(filename, "a") do io
+                            println(io, "$it $d $Ec $E_worst $(minimum(Es))" * teacher ? " $testEc" : "")
+                        end
+                    end
+                    break
+                end
             end
         end
 
@@ -137,7 +175,7 @@ function simplex_chain(
         scale = norm(c) / √(1 - d^2 / 2)
         c ./= scale
 
-        @info "it = $it [$failures] d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]"
+        @info "it = $it [$failures] d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]" * (teacher ? " testEc = $testEc" : "")
         println("norms: $(mean(norms)) ± $(std(norms))")
 
         d *= rescale_factor
