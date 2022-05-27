@@ -133,7 +133,7 @@ function simplex_chain(
     @info "it = 0 d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]" * (teacher ? " $testEc" : "")
     println("norms: $(mean(norms)) ± $(std(norms))")
 
-    ind = 1
+    # ind = 1
 
     it = 0
     failures = 0
@@ -147,22 +147,23 @@ function simplex_chain(
         for attempt = 1:iters
             p_new, E_new = gen_candidate(c, d, trainset, trainlabels, K)
             if E_new < E_worst
+                ind = rand(1:y)
                 Es[ind] = E_new
                 E_worst = maximum(Es)
                 norms[ind] = norm(p_new)
                 c = (y - 1) / y * c + 1 / y * p_new
-                Ec = energy(c, K, trainset, trainlabels)
-                testEc = teacher ? energy(c, K, testset, testlabels) : 0.0
+                # Ec = energy(c, K, trainset, trainlabels)
+                # testEc = teacher ? energy(c, K, testset, testlabels) : 0.0
                 failed = false
-                ind = mod1(ind + 1, y)
-                if Ec == 0
-                    if verbose
-                        open(filename, "a") do io
-                            println(io, "$it $d $Ec $E_worst $(minimum(Es))" * teacher ? " $testEc" : "")
-                        end
-                    end
-                    break
-                end
+                # ind = mod1(ind + 1, y)
+                # if Ec == 0
+                #     if verbose
+                #         open(filename, "a") do io
+                #             println(io, "$it $d $Ec $E_worst $(minimum(Es))" * (teacher ? " $testEc" : ""))
+                #         end
+                #     end
+                #     break
+                # end
             end
         end
 
@@ -171,12 +172,14 @@ function simplex_chain(
         else
             failures = 0
         end
-
-        scale = norm(c) / √(1 - d^2 / 2)
-        c ./= scale
+        Ec = energy(c, K, trainset, trainlabels)
+        testEc = teacher ? energy(c, K, testset, testlabels) : 0.0
 
         @info "it = $it [$failures] d = $d Ec = $(Ec) Es = $(mean(Es)) ± $(std(Es)) [$(extrema(Es))]" * (teacher ? " testEc = $testEc" : "")
         println("norms: $(mean(norms)) ± $(std(norms))")
+
+        scale = norm(c) / √(1 - d^2 / 2)
+        c ./= scale
 
         d *= rescale_factor
 
